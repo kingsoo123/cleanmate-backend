@@ -35,6 +35,9 @@ export class WalkInLineItemDto {
 }
 
 export class CreateWalkInOrderDto {
+  @IsUUID()
+  branchId: string;
+
   @IsIn(['existing', 'walk-in'])
   customerMode: 'existing' | 'walk-in';
 

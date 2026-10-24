@@ -38,6 +38,10 @@ export class LaundryOrder {
   businessId: string;
 
   @Index()
+  @Column({ type: 'uuid', name: 'branch_id', nullable: true })
+  branchId: string | null;
+
+  @Index()
   @Column({ type: 'uuid', name: 'customer_id', nullable: true })
   customerId: string | null;
 

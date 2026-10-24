@@ -11,6 +11,7 @@ import { LaundryOrder } from '../entities/laundry-order.entity';
 import { OrderLineItem } from '../entities/order-line-item.entity';
 import { Payment } from '../entities/payment.entity';
 import { User } from '../users/user.entity';
+import { BranchesService } from '../branches/branches.service';
 import { CreateWalkInOrderDto } from './dto/create-walk-in-order.dto';
 import { RecordPaymentDto } from './dto/record-payment.dto';
 import { SubmitCustomerPaymentDto } from './dto/submit-customer-payment.dto';
@@ -35,12 +36,18 @@ export class OrdersService {
     private readonly users: Repository<User>,
     private readonly identity: OrderIdentityService,
     private readonly customerNotifications: CustomerNotificationsService,
+    private readonly branches: BranchesService,
   ) {}
 
   async createWalkInOrder(business: User, dto: CreateWalkInOrderDto) {
     if (business.role !== 'business') {
       throw new ForbiddenException();
     }
+
+    const branch = await this.branches.assertOwnedByBusiness(
+      business.id,
+      dto.branchId,
+    );
 
     const totalNgn = sumLineItemsTotal(dto.lineItems);
     const paidNgn = Math.min(dto.initialPaymentNgn, totalNgn);
@@ -97,6 +104,7 @@ export class OrdersService {
 
     const order = this.orders.create({
       businessId: business.id,
+      branchId: branch.id,
       customerId,
       walkInName,
       walkInPhone,

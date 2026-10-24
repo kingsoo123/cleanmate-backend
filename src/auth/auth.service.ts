@@ -7,6 +7,7 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
+import { BranchesService } from '../branches/branches.service';
 import { User, UserRole } from '../users/user.entity';
 import { ForgotPinDto } from './dto/forgot-pin.dto';
 import { SignInDto } from './dto/sign-in.dto';
@@ -34,6 +35,7 @@ export class AuthService {
     @InjectRepository(User)
     private readonly users: Repository<User>,
     private readonly jwt: JwtService,
+    private readonly branches: BranchesService,
   ) {}
 
   async signUp(dto: SignUpDto) {
@@ -69,6 +71,14 @@ export class AuthService {
       businessName: dto.businessName.trim(),
     });
     await this.users.save(user);
+
+    await this.branches.createMany(
+      user.id,
+      (dto.branches ?? []).map((branch) => ({
+        name: branch.name,
+        address: branch.address,
+      })),
+    );
 
     return this.buildAuthResponse(user);
   }

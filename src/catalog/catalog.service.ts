@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { BranchesService } from '../branches/branches.service';
 import { CatalogService as CatalogServiceEntity } from '../entities/catalog-service.entity';
 import { User } from '../users/user.entity';
 import { DEFAULT_CATALOG_SERVICES } from './default-services';
@@ -12,6 +13,7 @@ export class CatalogService {
     private readonly services: Repository<CatalogServiceEntity>,
     @InjectRepository(User)
     private readonly users: Repository<User>,
+    private readonly branches: BranchesService,
   ) {}
 
   async ensureDefaultCatalog(businessId: string) {
@@ -56,10 +58,19 @@ export class CatalogService {
   }
 
   async getNewOrderCatalog(business: User) {
-    const [customers, services] = await Promise.all([
+    const [customers, services, branchRows] = await Promise.all([
       this.listCustomersForBusiness(business),
       this.listServicesForBusiness(business),
+      this.branches.ensureAtLeastOne(business.id, business.businessName),
     ]);
-    return { customers, services };
+    return {
+      customers,
+      services,
+      branches: branchRows.map((branch) => ({
+        id: branch.id,
+        name: branch.name,
+        address: branch.address,
+      })),
+    };
   }
 }

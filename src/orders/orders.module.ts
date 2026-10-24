@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { BranchesModule } from '../branches/branches.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { LaundryOrder } from '../entities/laundry-order.entity';
 import { OrderLineItem } from '../entities/order-line-item.entity';
@@ -10,6 +11,7 @@ import { OrdersService } from './orders.service';
 
 @Module({
   imports: [
+    BranchesModule,
     TypeOrmModule.forFeature([LaundryOrder, OrderLineItem, Payment, User]),
     NotificationsModule,
   ],
