@@ -10,6 +10,6 @@ import { PushService } from './push.service';
   imports: [TypeOrmModule.forFeature([UserPushToken]), AuthModule],
   controllers: [PushController],
   providers: [FcmService, PushService],
-  exports: [PushService],
+  exports: [FcmService, PushService],
 })
 export class PushModule {}

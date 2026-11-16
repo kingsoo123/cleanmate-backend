@@ -58,6 +58,13 @@ export class PushService {
       return;
     }
 
+    if (!this.fcm.isEnabled()) {
+      this.logger.warn(
+        `Push skipped for user ${userId}: Firebase Admin is not configured on this server (set FIREBASE_SERVICE_ACCOUNT_JSON on Render).`,
+      );
+      return;
+    }
+
     const normalized: FcmPayload = {
       ...payload,
       href: this.resolveHref(payload.href),

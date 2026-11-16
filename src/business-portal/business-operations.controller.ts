@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -12,6 +14,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { CatalogService } from '../catalog/catalog.service';
+import { CreateCatalogServiceDto } from '../catalog/dto/create-catalog-service.dto';
+import { UpdateCatalogServiceDto } from '../catalog/dto/update-catalog-service.dto';
 import { DashboardService } from '../dashboard/dashboard.service';
 import { SendMessageDto } from '../messages/dto/send-message.dto';
 import { MessagesService } from '../messages/messages.service';
@@ -79,6 +83,37 @@ export class BusinessOperationsController {
   @Get('orders/catalog')
   getNewOrderCatalog(@CurrentUser() user: User) {
     return this.catalog.getNewOrderCatalog(user);
+  }
+
+  @Get('catalog/services')
+  listCatalogServices(@CurrentUser() user: User) {
+    return this.catalog.listServicesForBusiness(user);
+  }
+
+  @Post('catalog/services')
+  createCatalogService(
+    @CurrentUser() user: User,
+    @Body() dto: CreateCatalogServiceDto,
+  ) {
+    return this.catalog.createServiceForBusiness(user, dto);
+  }
+
+  @Patch('catalog/services/:id')
+  updateCatalogService(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Body() dto: UpdateCatalogServiceDto,
+  ) {
+    return this.catalog.updateServiceForBusiness(user, id, dto);
+  }
+
+  @Delete('catalog/services/:id')
+  @HttpCode(204)
+  async deleteCatalogService(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+  ) {
+    await this.catalog.deleteServiceForBusiness(user, id);
   }
 
   @Post('orders/walk-in')
