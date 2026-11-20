@@ -1,11 +1,17 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository } from 'typeorm';
+import { BranchesService } from '../branches/branches.service';
 import { formatRelativeTime } from '../common/format';
 import { LaundryOrder } from '../entities/laundry-order.entity';
 import { Payment } from '../entities/payment.entity';
 import { PickupRequest } from '../entities/pickup-request.entity';
 import { User } from '../users/user.entity';
+import {
+  orderListWhere,
+  resolveBusinessPortalAccess,
+  type BusinessPortalAccess,
+} from '../business-portal/business-portal.access';
 
 const PIPELINE_STAGE_ORDER = [
   'Quotation',
@@ -36,35 +42,38 @@ export class DashboardService {
     private readonly payments: Repository<Payment>,
     @InjectRepository(PickupRequest)
     private readonly pickups: Repository<PickupRequest>,
+    private readonly branches: BranchesService,
   ) {}
 
   async getDashboardForBusiness(business: User) {
-    if (business.role !== 'business') {
-      throw new ForbiddenException();
-    }
-
-    const businessId = business.id;
+    const access = resolveBusinessPortalAccess(business);
+    const businessId = access.ownerUserId;
+    const orderWhere = orderListWhere(access);
     const today = this.todayRange();
     const yesterday = this.yesterdayRange();
     const week = this.weekRange();
 
     const [orders, payments, pickupRows] = await Promise.all([
       this.orders.find({
-        where: { businessId },
+        where: orderWhere,
         relations: { customer: true },
         order: { updatedAt: 'DESC' },
       }),
-      this.payments.find({
-        where: { businessId },
-        relations: { customer: true, order: true },
-        order: { paidAt: 'DESC' },
-        take: 50,
-      }),
-      this.pickups.find({
-        where: { businessId },
-        relations: { customer: true, assignedRider: true },
-        order: { updatedAt: 'DESC' },
-      }),
+      access.isOwner
+        ? this.payments.find({
+            where: { businessId },
+            relations: { customer: true, order: true },
+            order: { paidAt: 'DESC' },
+            take: 50,
+          })
+        : Promise.resolve([]),
+      access.isOwner
+        ? this.pickups.find({
+            where: { businessId },
+            relations: { customer: true, assignedRider: true },
+            order: { updatedAt: 'DESC' },
+          })
+        : Promise.resolve([]),
     ]);
 
     const paymentsToday = payments.filter(
@@ -149,11 +158,14 @@ export class DashboardService {
       ).length,
     };
 
+    const insights = await this.buildInsights(access, orders);
+    const displayName = await this.portalBusinessName(access);
+
     return {
-      businessName:
-        business.businessName?.trim() || business.fullName || 'Your laundry',
+      businessName: displayName,
       periodLabel: today.label,
       isPreviewData: false,
+      insights,
       financial: {
         revenueTodayNgn,
         paymentsReceivedNgn,
@@ -407,5 +419,219 @@ export class DashboardService {
     start.setDate(start.getDate() - diff);
     start.setHours(0, 0, 0, 0);
     return { start, end };
+  }
+
+  private lastSevenDayBuckets() {
+    const days: Array<{ start: Date; end: Date; label: string }> = [];
+    const anchor = new Date();
+    anchor.setHours(0, 0, 0, 0);
+    for (let offset = 6; offset >= 0; offset -= 1) {
+      const start = new Date(anchor);
+      start.setDate(anchor.getDate() - offset);
+      const end = new Date(start);
+      end.setHours(23, 59, 59, 999);
+      days.push({
+        start,
+        end,
+        label: start.toLocaleDateString('en-GB', { weekday: 'short' }),
+      });
+    }
+    const rangeStart = days[0].start;
+    const rangeEnd = days[days.length - 1].end;
+    return { days, rangeStart, rangeEnd };
+  }
+
+  private inRange(date: Date, start: Date, end: Date) {
+    return date >= start && date <= end;
+  }
+
+  private async buildInsights(
+    access: BusinessPortalAccess,
+    orders: LaundryOrder[],
+  ) {
+    const { days, rangeStart, rangeEnd } = this.lastSevenDayBuckets();
+    const businessId = access.ownerUserId;
+
+    const paymentRows = await this.payments.find({
+      where: {
+        businessId,
+        status: 'Successful',
+        paidAt: Between(rangeStart, rangeEnd),
+      },
+      relations: { order: true },
+    });
+    const payments = access.branchId
+      ? paymentRows.filter((row) => row.order?.branchId === access.branchId)
+      : paymentRows;
+
+    const ordersInRange = orders.filter(
+      (order) =>
+        order.createdAt >= rangeStart && order.createdAt <= rangeEnd,
+    );
+
+    const daily = days.map((day) => {
+      const paymentsNgn = payments
+        .filter((row) => this.inRange(row.paidAt, day.start, day.end))
+        .reduce((sum, row) => sum + row.amountNgn, 0);
+      const ordersCreated = orders.filter((order) =>
+        this.inRange(order.createdAt, day.start, day.end),
+      ).length;
+      const ordersCompleted = orders.filter(
+        (order) =>
+          order.status === 'Completed' &&
+          this.inRange(order.updatedAt, day.start, day.end),
+      ).length;
+      return {
+        label: day.label,
+        paymentsNgn,
+        ordersCreated,
+        ordersCompleted,
+      };
+    });
+
+    const statusLabels: Array<{ key: LaundryOrder['status']; label: string }> =
+      [
+        { key: 'Active', label: 'Active' },
+        { key: 'In Progress', label: 'In progress' },
+        { key: 'Quality Check', label: 'Quality check' },
+        { key: 'Ready', label: 'Ready' },
+        { key: 'Out for Delivery', label: 'Out for delivery' },
+        { key: 'Completed', label: 'Completed (7d)' },
+        { key: 'Cancelled', label: 'Cancelled (7d)' },
+      ];
+
+    const ordersByStatus = statusLabels.map(({ key, label }) => {
+      let count = 0;
+      if (key === 'Completed' || key === 'Cancelled') {
+        count = orders.filter(
+          (order) =>
+            order.status === key &&
+            order.updatedAt >= rangeStart &&
+            order.updatedAt <= rangeEnd,
+        ).length;
+      } else {
+        count = orders.filter((order) => order.status === key).length;
+      }
+      return { label, count };
+    }).filter((row) => row.count > 0);
+
+    const methodTotals = new Map<string, number>();
+    for (const payment of payments) {
+      const method = payment.method.trim() || 'Other';
+      methodTotals.set(method, (methodTotals.get(method) ?? 0) + payment.amountNgn);
+    }
+    const paymentsByMethod = [...methodTotals.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([label, amountNgn]) => ({ label, amountNgn }));
+
+    const sourceTotals = new Map<string, number>();
+    for (const order of ordersInRange) {
+      const source = order.source?.trim() || 'Walk-in';
+      sourceTotals.set(source, (sourceTotals.get(source) ?? 0) + 1);
+    }
+    const orderSources = [...sourceTotals.entries()].map(([label, count]) => ({
+      label,
+      count,
+    }));
+
+    const paymentsTotalNgn = payments.reduce((sum, row) => sum + row.amountNgn, 0);
+    const orderValueNgn = ordersInRange.reduce(
+      (sum, order) => sum + order.totalNgn,
+      0,
+    );
+    const completedCount = orders.filter(
+      (order) =>
+        order.status === 'Completed' &&
+        order.updatedAt >= rangeStart &&
+        order.updatedAt <= rangeEnd,
+    ).length;
+    const createdCount = ordersInRange.length;
+    const completionRatePercent =
+      createdCount > 0 ? Math.round((completedCount / createdCount) * 100) : 0;
+    const avgOrderValueNgn =
+      createdCount > 0 ? Math.round(orderValueNgn / createdCount) : 0;
+    const collectionRatePercent =
+      orderValueNgn > 0
+        ? Math.min(100, Math.round((paymentsTotalNgn / orderValueNgn) * 100))
+        : paymentsTotalNgn > 0
+          ? 100
+          : 0;
+
+    let branches: Array<{
+      label: string;
+      ordersCount: number;
+      paymentsNgn: number;
+    }> | undefined;
+
+    if (access.isOwner) {
+      const branchRows = await this.branches.listForBusiness(businessId);
+      const nameById = new Map(branchRows.map((row) => [row.id, row.name]));
+      const ordersByBranch = new Map<string, number>();
+      const paymentsByBranch = new Map<string, number>();
+
+      for (const order of ordersInRange) {
+        const key = order.branchId ?? 'unassigned';
+        ordersByBranch.set(key, (ordersByBranch.get(key) ?? 0) + 1);
+      }
+      for (const payment of paymentRows) {
+        const key = payment.order?.branchId ?? 'unassigned';
+        paymentsByBranch.set(
+          key,
+          (paymentsByBranch.get(key) ?? 0) + payment.amountNgn,
+        );
+      }
+
+      const branchIds = new Set([
+        ...ordersByBranch.keys(),
+        ...paymentsByBranch.keys(),
+      ]);
+      branches = [...branchIds]
+        .map((id) => ({
+          label:
+            id === 'unassigned'
+              ? 'Unassigned branch'
+              : (nameById.get(id) ?? 'Branch'),
+          ordersCount: ordersByBranch.get(id) ?? 0,
+          paymentsNgn: paymentsByBranch.get(id) ?? 0,
+        }))
+        .sort((a, b) => b.paymentsNgn - a.paymentsNgn);
+    }
+
+    return {
+      periodLabel: 'Last 7 days',
+      daily,
+      ordersByStatus,
+      paymentsByMethod,
+      orderSources,
+      branches,
+      summary: {
+        paymentsTotalNgn,
+        ordersCreated: createdCount,
+        ordersCompleted: completedCount,
+        completionRatePercent,
+        avgOrderValueNgn,
+        collectionRatePercent,
+      },
+    };
+  }
+
+  private async portalBusinessName(
+    access: BusinessPortalAccess,
+  ): Promise<string> {
+    if (access.isOwner) {
+      return (
+        access.actor.businessName?.trim() ||
+        access.actor.fullName?.trim() ||
+        'Your laundry'
+      );
+    }
+    const owner = await this.payments.manager.getRepository(User).findOne({
+      where: { id: access.ownerUserId, role: 'business' },
+    });
+    return (
+      owner?.businessName?.trim() ||
+      owner?.fullName?.trim() ||
+      'Your laundry'
+    );
   }
 }

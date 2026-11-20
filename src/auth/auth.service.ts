@@ -25,6 +25,9 @@ export type AuthUserPayload = {
   businessName: string | null;
   email: string | null;
   phone: string;
+  businessId: string | null;
+  branchId: string | null;
+  branchName: string | null;
 };
 
 @Injectable()
@@ -80,7 +83,7 @@ export class AuthService {
       })),
     );
 
-    return this.buildAuthResponse(user);
+    return await this.buildAuthResponse(user);
   }
 
   async signIn(dto: SignInDto) {
@@ -94,7 +97,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials.');
     }
 
-    return this.buildAuthResponse(user);
+    return await this.buildAuthResponse(user);
   }
 
   async forgotPin(dto: ForgotPinDto) {
@@ -129,14 +132,34 @@ export class AuthService {
     return this.users.findOne({ where: { phoneNormalized, role } });
   }
 
-  private buildAuthResponse(user: User) {
+  private async buildAuthResponse(user: User) {
+    let businessName = user.businessName;
+    let businessId: string | null = user.role === 'business' ? user.id : user.businessId;
+    let branchId: string | null = user.branchId ?? null;
+    let branchName: string | null = null;
+
+    if (user.role === 'branch_manager' && user.businessId) {
+      const owner = await this.users.findOne({
+        where: { id: user.businessId, role: 'business' },
+      });
+      businessName = owner?.businessName ?? owner?.fullName ?? businessName;
+      if (user.branchId) {
+        const branches = await this.branches.listForBusiness(user.businessId);
+        branchName =
+          branches.find((row) => row.id === user.branchId)?.name ?? null;
+      }
+    }
+
     const payload: AuthUserPayload = {
       id: user.id,
       role: user.role,
       fullName: user.fullName,
-      businessName: user.businessName,
+      businessName,
       email: user.email,
       phone: user.phone,
+      businessId,
+      branchId,
+      branchName,
     };
     const accessToken = this.jwt.sign({
       sub: user.id,

@@ -21,6 +21,8 @@ import { SendMessageDto } from '../messages/dto/send-message.dto';
 import { MessagesService } from '../messages/messages.service';
 import { CreateWalkInOrderDto } from '../orders/dto/create-walk-in-order.dto';
 import { RecordPaymentDto } from '../orders/dto/record-payment.dto';
+import { BulkUpdateOrderStatusDto } from '../orders/dto/bulk-update-order-status.dto';
+import { UpdateOrderStatusDto } from '../orders/dto/update-order-status.dto';
 import { OrdersService } from '../orders/orders.service';
 import { MarkInboxReadDto } from '../notifications/dto/mark-inbox-read.dto';
 import { UpdateNotificationSettingsDto } from '../notifications/dto/update-notification-settings.dto';
@@ -32,7 +34,7 @@ import { User } from '../users/user.entity';
 
 @Controller('business')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('business')
+@Roles('business', 'branch_manager')
 export class BusinessOperationsController {
   constructor(
     private readonly dashboard: DashboardService,
@@ -50,6 +52,7 @@ export class BusinessOperationsController {
   }
 
   @Get('notifications')
+  @Roles('business')
   getNotifications(@CurrentUser() user: User) {
     return this.notifications.getBundleForBusiness(user);
   }
@@ -68,6 +71,7 @@ export class BusinessOperationsController {
   }
 
   @Patch('notifications/settings')
+  @Roles('business')
   updateNotificationSettings(
     @CurrentUser() user: User,
     @Body() dto: UpdateNotificationSettingsDto,
@@ -76,6 +80,7 @@ export class BusinessOperationsController {
   }
 
   @Get('reports')
+  @Roles('business')
   getReports(@CurrentUser() user: User) {
     return this.reports.getSnapshotsForBusiness(user);
   }
@@ -86,11 +91,13 @@ export class BusinessOperationsController {
   }
 
   @Get('catalog/services')
+  @Roles('business')
   listCatalogServices(@CurrentUser() user: User) {
     return this.catalog.listServicesForBusiness(user);
   }
 
   @Post('catalog/services')
+  @Roles('business')
   createCatalogService(
     @CurrentUser() user: User,
     @Body() dto: CreateCatalogServiceDto,
@@ -99,6 +106,7 @@ export class BusinessOperationsController {
   }
 
   @Patch('catalog/services/:id')
+  @Roles('business')
   updateCatalogService(
     @CurrentUser() user: User,
     @Param('id') id: string,
@@ -109,6 +117,7 @@ export class BusinessOperationsController {
 
   @Delete('catalog/services/:id')
   @HttpCode(204)
+  @Roles('business')
   async deleteCatalogService(
     @CurrentUser() user: User,
     @Param('id') id: string,
@@ -125,6 +134,7 @@ export class BusinessOperationsController {
   }
 
   @Get('pickups')
+  @Roles('business')
   async listPickups(@CurrentUser() user: User) {
     const [pickups, riders] = await Promise.all([
       this.pickups.listForBusiness(user),
@@ -134,6 +144,7 @@ export class BusinessOperationsController {
   }
 
   @Patch('pickups/:id')
+  @Roles('business')
   updatePickup(
     @CurrentUser() user: User,
     @Param('id') id: string,
@@ -152,27 +163,49 @@ export class BusinessOperationsController {
     return this.orders.getOneForBusiness(user, id);
   }
 
+  @Patch('orders/bulk-status')
+  bulkUpdateOrderStatus(
+    @CurrentUser() user: User,
+    @Body() dto: BulkUpdateOrderStatusDto,
+  ) {
+    return this.orders.bulkUpdateOrderStatusForBusiness(user, dto);
+  }
+
+  @Patch('orders/:id')
+  updateOrderStatus(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Body() dto: UpdateOrderStatusDto,
+  ) {
+    return this.orders.updateOrderStatusForBusiness(user, id, dto);
+  }
+
   @Get('payments')
+  @Roles('business')
   listPayments(@CurrentUser() user: User) {
     return this.orders.getBusinessPaymentsBundle(user);
   }
 
   @Post('payments')
+  @Roles('business')
   recordPayment(@CurrentUser() user: User, @Body() dto: RecordPaymentDto) {
     return this.orders.recordPayment(user, dto);
   }
 
   @Patch('payments/:id/verify')
+  @Roles('business')
   verifyPayment(@CurrentUser() user: User, @Param('id') id: string) {
     return this.orders.verifyPayment(user, id);
   }
 
   @Get('messages/conversations')
+  @Roles('business')
   listMessageConversations(@CurrentUser() user: User) {
     return this.messages.listConversationsForBusiness(user);
   }
 
   @Get('messages/conversations/:customerId')
+  @Roles('business')
   getMessageThread(
     @CurrentUser() user: User,
     @Param('customerId') customerId: string,
@@ -181,6 +214,7 @@ export class BusinessOperationsController {
   }
 
   @Post('messages/conversations/:customerId')
+  @Roles('business')
   sendMessageToCustomer(
     @CurrentUser() user: User,
     @Param('customerId') customerId: string,
@@ -190,6 +224,7 @@ export class BusinessOperationsController {
   }
 
   @Post('messages/conversations/:customerId/typing')
+  @Roles('business')
   recordTyping(
     @CurrentUser() user: User,
     @Param('customerId') customerId: string,

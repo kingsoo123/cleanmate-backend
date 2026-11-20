@@ -184,6 +184,36 @@ export class CustomerNotificationsService {
       .execute();
   }
 
+  async notifyOrderStatusUpdated(
+    order: LaundryOrder,
+    customer: User,
+    businessName: string,
+    status: string,
+    processingStage: string,
+  ) {
+    const tag = this.orderTag(order);
+    if (!tag) return;
+
+    const title = 'Order status updated';
+    const body = `Tag ${tag} is now “${status}” (${processingStage}) at ${businessName}.`;
+    const href = `/customer/orders/${order.id}`;
+
+    await this.notifications.save(
+      this.notifications.create({
+        customerId: customer.id,
+        businessId: order.businessId,
+        orderId: order.id,
+        tag,
+        trackingCode: tag,
+        eventType: 'order_status',
+        title,
+        body,
+        href,
+      }),
+    );
+    void this.push.sendToUser(customer.id, { title, body, href });
+  }
+
   async notifyPaymentReceived(
     order: LaundryOrder,
     customer: User,

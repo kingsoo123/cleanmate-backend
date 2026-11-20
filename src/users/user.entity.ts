@@ -10,7 +10,11 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
-export type UserRole = 'business' | 'customer' | 'rider';
+export type UserRole =
+  | 'business'
+  | 'branch_manager'
+  | 'customer'
+  | 'rider';
 
 @Entity('users')
 @Unique(['phoneNormalized', 'role'])
@@ -55,6 +59,11 @@ export class User {
 
   @Column({ type: 'varchar', length: 500, name: 'default_address', nullable: true })
   defaultAddress: string | null;
+
+  /** Assigned branch when role is branch_manager. */
+  @Index()
+  @Column({ type: 'uuid', name: 'branch_id', nullable: true })
+  branchId: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

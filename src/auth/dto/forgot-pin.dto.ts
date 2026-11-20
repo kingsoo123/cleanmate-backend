@@ -13,8 +13,8 @@ export class ForgotPinDto {
   @MaxLength(255)
   identifier: string;
 
-  @IsIn(['business', 'customer', 'rider'])
-  role: 'business' | 'customer' | 'rider';
+  @IsIn(['business', 'branch_manager', 'customer', 'rider'])
+  role: 'business' | 'branch_manager' | 'customer' | 'rider';
 
   @IsString()
   @Length(6, 6)

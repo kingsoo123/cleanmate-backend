@@ -5,6 +5,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { buildTypeOrmOptions } from './config/typeorm.config';
+import { BranchManagersModule } from './branch-managers/branch-managers.module';
 import { BusinessPortalModule } from './business-portal/business-portal.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
 import { CustomersModule } from './customers/customers.module';
@@ -21,6 +22,7 @@ import { PushModule } from './push/push.module';
     CustomersModule,
     CustomerPortalModule,
     BusinessPortalModule,
+    BranchManagersModule,
     PushModule,
   ],
   controllers: [AppController],

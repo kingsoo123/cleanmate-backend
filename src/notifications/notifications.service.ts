@@ -10,6 +10,7 @@ import { LaundryOrder } from '../entities/laundry-order.entity';
 import { Payment } from '../entities/payment.entity';
 import { PickupRequest } from '../entities/pickup-request.entity';
 import { User } from '../users/user.entity';
+import { resolveBusinessPortalAccess } from '../business-portal/business-portal.access';
 import {
   DEFAULT_NOTIFICATION_TEMPLATES,
   mergeChannelEnabled,
@@ -87,10 +88,10 @@ export class NotificationsService {
   }
 
   async getInboxSummaryForBusiness(business: User) {
-    this.assertBusiness(business);
-    const readKeys = await this.loadReadKeys(business.id);
+    const access = resolveBusinessPortalAccess(business);
+    const readKeys = await this.loadReadKeys(access.ownerUserId);
     const inbox = this.applyReadState(
-      await this.buildInboxItems(business.id),
+      await this.buildInboxItems(access.ownerUserId),
       readKeys,
     );
     return {
@@ -100,12 +101,12 @@ export class NotificationsService {
   }
 
   async markInboxRead(business: User, dto: MarkInboxReadDto) {
-    this.assertBusiness(business);
+    const access = resolveBusinessPortalAccess(business);
 
     if (dto.all) {
-      const items = await this.buildInboxItems(business.id);
+      const items = await this.buildInboxItems(access.ownerUserId);
       await this.upsertReadKeys(
-        business.id,
+        access.ownerUserId,
         items.map((item) => item.id),
       );
       return { ok: true };
@@ -115,7 +116,7 @@ export class NotificationsService {
     if (keys.length === 0) {
       return { ok: true };
     }
-    await this.upsertReadKeys(business.id, keys);
+    await this.upsertReadKeys(access.ownerUserId, keys);
     return { ok: true };
   }
 

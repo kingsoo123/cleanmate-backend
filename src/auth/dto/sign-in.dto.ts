@@ -18,6 +18,6 @@ export class SignInDto {
   @Matches(/^\d{6}$/)
   pin: string;
 
-  @IsIn(['business', 'customer', 'rider'])
-  role: 'business' | 'customer' | 'rider';
+  @IsIn(['business', 'branch_manager', 'customer', 'rider'])
+  role: 'business' | 'branch_manager' | 'customer' | 'rider';
 }

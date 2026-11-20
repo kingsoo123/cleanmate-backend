@@ -10,6 +10,10 @@ import { UpdateCatalogServiceDto } from './dto/update-catalog-service.dto';
 import { BranchesService } from '../branches/branches.service';
 import { CatalogService as CatalogServiceEntity } from '../entities/catalog-service.entity';
 import { User } from '../users/user.entity';
+import {
+  assertBusinessOwner,
+  resolveBusinessPortalAccess,
+} from '../business-portal/business-portal.access';
 import { DEFAULT_CATALOG_SERVICES } from './default-services';
 
 @Injectable()
@@ -61,6 +65,7 @@ export class CatalogService {
   }
 
   async listServicesForBusiness(business: User) {
+    assertBusinessOwner(business);
     await this.ensureDefaultCatalog(business.id);
     const rows = await this.services.find({
       where: { businessId: business.id },
@@ -70,6 +75,7 @@ export class CatalogService {
   }
 
   async createServiceForBusiness(business: User, dto: CreateCatalogServiceDto) {
+    assertBusinessOwner(business);
     await this.ensureDefaultCatalog(business.id);
     const category = this.normalizeLabel(dto.category);
     const name = this.normalizeLabel(dto.name);
@@ -99,6 +105,7 @@ export class CatalogService {
     serviceId: string,
     dto: UpdateCatalogServiceDto,
   ) {
+    assertBusinessOwner(business);
     const row = await this.getOwnedService(business.id, serviceId);
     const category =
       dto.category !== undefined
@@ -133,14 +140,16 @@ export class CatalogService {
   }
 
   async deleteServiceForBusiness(business: User, serviceId: string) {
+    assertBusinessOwner(business);
     const row = await this.getOwnedService(business.id, serviceId);
     await this.services.remove(row);
     return { ok: true };
   }
 
   async listCustomersForBusiness(business: User) {
+    const access = resolveBusinessPortalAccess(business);
     const customers = await this.users.find({
-      where: { role: 'customer', businessId: business.id },
+      where: { role: 'customer', businessId: access.ownerUserId },
       order: { fullName: 'ASC' },
     });
     return customers.map((c) => ({
@@ -150,16 +159,35 @@ export class CatalogService {
     }));
   }
 
+  private async listServicesForOwner(businessId: string) {
+    await this.ensureDefaultCatalog(businessId);
+    const rows = await this.services.find({
+      where: { businessId },
+      order: { category: 'ASC', name: 'ASC' },
+    });
+    return rows.map((row) => this.toServiceDto(row));
+  }
+
   async getNewOrderCatalog(business: User) {
+    const access = resolveBusinessPortalAccess(business);
+    const owner = await this.users.findOne({
+      where: { id: access.ownerUserId, role: 'business' },
+    });
     const [customers, services, branchRows] = await Promise.all([
       this.listCustomersForBusiness(business),
-      this.listServicesForBusiness(business),
-      this.branches.ensureAtLeastOne(business.id, business.businessName),
+      this.listServicesForOwner(access.ownerUserId),
+      this.branches.ensureAtLeastOne(
+        access.ownerUserId,
+        owner?.businessName ?? null,
+      ),
     ]);
+    const visibleBranches = access.branchId
+      ? branchRows.filter((branch) => branch.id === access.branchId)
+      : branchRows;
     return {
       customers,
       services,
-      branches: branchRows.map((branch) => ({
+      branches: visibleBranches.map((branch) => ({
         id: branch.id,
         name: branch.name,
         address: branch.address,

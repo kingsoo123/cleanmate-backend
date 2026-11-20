@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -12,9 +13,21 @@ import { OrderLineItem } from '../entities/order-line-item.entity';
 import { Payment } from '../entities/payment.entity';
 import { User } from '../users/user.entity';
 import { BranchesService } from '../branches/branches.service';
+import {
+  assertBusinessOwner,
+  assertOrderInPortalScope,
+  orderListWhere,
+  resolveBusinessPortalAccess,
+  type BusinessPortalAccess,
+} from '../business-portal/business-portal.access';
 import { CreateWalkInOrderDto } from './dto/create-walk-in-order.dto';
 import { RecordPaymentDto } from './dto/record-payment.dto';
 import { SubmitCustomerPaymentDto } from './dto/submit-customer-payment.dto';
+import { BulkUpdateOrderStatusDto } from './dto/bulk-update-order-status.dto';
+import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import {
+  DEFAULT_PROCESSING_STAGE_BY_STATUS,
+} from './order-status.defaults';
 import { CustomerNotificationsService } from '../notifications/customer-notifications.service';
 import { OrderIdentityService } from './order-identity.service';
 import {
@@ -40,13 +53,15 @@ export class OrdersService {
   ) {}
 
   async createWalkInOrder(business: User, dto: CreateWalkInOrderDto) {
-    if (business.role !== 'business') {
-      throw new ForbiddenException();
+    const access = resolveBusinessPortalAccess(business);
+    const branchId = access.branchId ?? dto.branchId;
+    if (access.branchId && dto.branchId !== access.branchId) {
+      throw new ForbiddenException('You can only create orders for your branch.');
     }
 
     const branch = await this.branches.assertOwnedByBusiness(
-      business.id,
-      dto.branchId,
+      access.ownerUserId,
+      branchId,
     );
 
     const totalNgn = sumLineItemsTotal(dto.lineItems);
@@ -78,7 +93,7 @@ export class OrdersService {
         where: {
           id: dto.customerId,
           role: 'customer',
-          businessId: business.id,
+          businessId: access.ownerUserId,
         },
       });
       if (!customer) {
@@ -98,12 +113,14 @@ export class OrdersService {
       sendForApproval: dto.sendForApproval,
     });
 
-    const orderNumber = await this.identity.allocateOrderNumber(business.id);
+    const orderNumber = await this.identity.allocateOrderNumber(
+      access.ownerUserId,
+    );
     const tag = await this.identity.allocateTrackingCode();
     const outstandingNgn = Math.max(0, totalNgn - paidNgn);
 
     const order = this.orders.create({
-      businessId: business.id,
+      businessId: access.ownerUserId,
       branchId: branch.id,
       customerId,
       walkInName,
@@ -140,7 +157,7 @@ export class OrdersService {
     if (paidNgn > 0 && customerId) {
       await this.payments.save(
         this.payments.create({
-          businessId: business.id,
+          businessId: access.ownerUserId,
           orderId: savedOrder.id,
           customerId,
           amountNgn: paidNgn,
@@ -152,8 +169,7 @@ export class OrdersService {
 
     if (customerId) {
       const customer = await this.users.findOne({ where: { id: customerId } });
-      const businessName =
-        business.businessName?.trim() || business.fullName || 'Your laundry';
+      const businessName = await this.portalBusinessName(access);
       if (customer) {
         if (dto.sendForApproval) {
           await this.customerNotifications.notifyQuotationSent(
@@ -194,11 +210,9 @@ export class OrdersService {
   }
 
   async listForBusiness(business: User) {
-    if (business.role !== 'business') {
-      throw new ForbiddenException();
-    }
+    const access = resolveBusinessPortalAccess(business);
     const rows = await this.orders.find({
-      where: { businessId: business.id },
+      where: orderListWhere(access),
       relations: { customer: true },
       order: { updatedAt: 'DESC' },
     });
@@ -209,20 +223,155 @@ export class OrdersService {
   }
 
   async getOneForBusiness(business: User, orderId: string) {
-    if (business.role !== 'business') {
-      throw new ForbiddenException();
-    }
+    const access = resolveBusinessPortalAccess(business);
 
     const order = await this.orders.findOne({
-      where: { id: orderId, businessId: business.id },
+      where: { id: orderId, businessId: access.ownerUserId },
       relations: { customer: true },
     });
     if (!order) {
       throw new NotFoundException('Order not found.');
     }
+    assertOrderInPortalScope(access, order);
 
     await this.ensureOrderTag(order);
     return this.toBusinessListRow(order);
+  }
+
+  async updateOrderStatusForBusiness(
+    business: User,
+    orderId: string,
+    dto: UpdateOrderStatusDto,
+  ) {
+    const access = resolveBusinessPortalAccess(business);
+
+    const order = await this.orders.findOne({
+      where: { id: orderId, businessId: access.ownerUserId },
+      relations: { customer: true },
+    });
+    if (!order) {
+      throw new NotFoundException('Order not found.');
+    }
+    assertOrderInPortalScope(access, order);
+
+    if (['Completed', 'Cancelled'].includes(order.status)) {
+      throw new BadRequestException(
+        'This order is closed. Re-open is not supported yet.',
+      );
+    }
+
+    if (dto.status === 'Completed' && order.outstandingNgn > 0) {
+      throw new BadRequestException(
+        'Record or collect the outstanding balance before marking the order completed.',
+      );
+    }
+
+    const previousStatus = order.status;
+    const previousStage = order.processingStage;
+    const processingStage =
+      dto.processingStage?.trim() ||
+      DEFAULT_PROCESSING_STAGE_BY_STATUS[dto.status] ||
+      order.processingStage;
+
+    order.status = dto.status;
+    order.processingStage = processingStage;
+    await this.orders.save(order);
+
+    if (
+      order.customerId &&
+      order.customer &&
+      (previousStatus !== dto.status || previousStage !== processingStage)
+    ) {
+      const businessName = await this.portalBusinessName(access);
+      void this.customerNotifications.notifyOrderStatusUpdated(
+        order,
+        order.customer,
+        businessName,
+        dto.status,
+        processingStage,
+      );
+    }
+
+    return this.toBusinessListRow(order);
+  }
+
+  async bulkUpdateOrderStatusForBusiness(
+    business: User,
+    dto: BulkUpdateOrderStatusDto,
+  ) {
+    const access = resolveBusinessPortalAccess(business);
+
+    const uniqueIds = [...new Set(dto.orderIds)];
+    const payload: UpdateOrderStatusDto = {
+      status: dto.status,
+      processingStage: dto.processingStage,
+    };
+
+    const updated: Awaited<ReturnType<OrdersService['getOneForBusiness']>>[] = [];
+    const skipped: {
+      orderId: string;
+      orderNumber: string;
+      reason: string;
+    }[] = [];
+
+    for (const orderId of uniqueIds) {
+      try {
+        const row = await this.updateOrderStatusForBusiness(
+          business,
+          orderId,
+          payload,
+        );
+        updated.push(row);
+      } catch (error) {
+        const reason =
+          error instanceof HttpException
+            ? this.httpExceptionMessage(error)
+            : 'Could not update.';
+        const order = await this.orders.findOne({
+          where: { id: orderId, businessId: access.ownerUserId },
+          select: { id: true, orderNumber: true },
+        });
+        skipped.push({
+          orderId,
+          orderNumber: order?.orderNumber ?? orderId,
+          reason,
+        });
+      }
+    }
+
+    if (updated.length === 0 && skipped.length > 0) {
+      throw new BadRequestException(
+        'No orders were updated. Check skipped reasons.',
+      );
+    }
+
+    return {
+      updated,
+      skipped,
+      updatedCount: updated.length,
+      skippedCount: skipped.length,
+    };
+  }
+
+  private httpExceptionMessage(error: HttpException): string {
+    const response = error.getResponse();
+    if (typeof response === 'string') {
+      return response;
+    }
+    if (
+      response &&
+      typeof response === 'object' &&
+      'message' in response
+    ) {
+      const message = (response as { message: string | string[] }).message;
+      if (Array.isArray(message)) {
+        return message.join(' ');
+      }
+      if (typeof message === 'string') {
+        return message;
+      }
+    }
+    return error.message;
   }
 
   async listForCustomer(customer: User) {
@@ -272,9 +421,7 @@ export class OrdersService {
   }
 
   async recordPayment(business: User, dto: RecordPaymentDto) {
-    if (business.role !== 'business') {
-      throw new ForbiddenException();
-    }
+    assertBusinessOwner(business);
 
     const order = await this.orders.findOne({
       where: { id: dto.orderId, businessId: business.id },
@@ -320,9 +467,7 @@ export class OrdersService {
   }
 
   async getBusinessPaymentsBundle(business: User) {
-    if (business.role !== 'business') {
-      throw new ForbiddenException();
-    }
+    assertBusinessOwner(business);
     const [payments, outstanding] = await Promise.all([
       this.listBusinessPaymentRecords(business),
       this.listOutstandingOrdersForBusiness(business),
@@ -331,9 +476,7 @@ export class OrdersService {
   }
 
   async verifyPayment(business: User, paymentId: string) {
-    if (business.role !== 'business') {
-      throw new ForbiddenException();
-    }
+    assertBusinessOwner(business);
 
     const payment = await this.payments.findOne({
       where: { id: paymentId, businessId: business.id },
@@ -538,6 +681,7 @@ export class OrdersService {
     const pending = payment.status === 'Pending';
     return {
       id: payment.id,
+      orderId: order.id,
       reference: this.paymentReference(payment.id),
       orderNumber: order.orderNumber,
       customerName:
@@ -624,5 +768,25 @@ export class OrdersService {
         (order.deliveryPreference as 'Pickup at shop' | 'Home delivery') ??
         'Pickup at shop',
     };
+  }
+
+  private async portalBusinessName(
+    access: BusinessPortalAccess,
+  ): Promise<string> {
+    if (access.isOwner) {
+      return (
+        access.actor.businessName?.trim() ||
+        access.actor.fullName?.trim() ||
+        'Your laundry'
+      );
+    }
+    const owner = await this.users.findOne({
+      where: { id: access.ownerUserId, role: 'business' },
+    });
+    return (
+      owner?.businessName?.trim() ||
+      owner?.fullName?.trim() ||
+      'Your laundry'
+    );
   }
 }
