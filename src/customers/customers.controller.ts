@@ -9,7 +9,7 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 
 @Controller('business/customers')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('business')
+@Roles('business', 'branch_manager')
 export class CustomersController {
   constructor(private readonly customers: CustomersService) {}
 

@@ -1,13 +1,10 @@
-import {
-  ConflictException,
-  ForbiddenException,
-  Injectable,
-} from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
 import { AddressesService } from '../addresses/addresses.service';
 import { normalizeEmail, normalizePhone } from '../auth/normalize';
+import { resolveBusinessPortalAccess } from '../business-portal/business-portal.access';
 import { User } from '../users/user.entity';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 
@@ -35,17 +32,15 @@ export class CustomersService {
     private readonly addresses: AddressesService,
   ) {}
 
-  assertBusinessOwner(user: User): void {
-    if (user.role !== 'business') {
-      throw new ForbiddenException('Only business accounts can manage customers.');
-    }
+  private ownerBusinessId(user: User): string {
+    return resolveBusinessPortalAccess(user).ownerUserId;
   }
 
   async listForBusiness(businessUser: User): Promise<CustomerRecord[]> {
-    this.assertBusinessOwner(businessUser);
+    const businessId = this.ownerBusinessId(businessUser);
 
     const rows = await this.users.find({
-      where: { role: 'customer', businessId: businessUser.id },
+      where: { role: 'customer', businessId },
       order: { createdAt: 'DESC' },
     });
 
@@ -56,7 +51,7 @@ export class CustomersService {
     businessUser: User,
     dto: CreateCustomerDto,
   ): Promise<CustomerRecord> {
-    this.assertBusinessOwner(businessUser);
+    const businessId = this.ownerBusinessId(businessUser);
 
     const phoneNormalized = normalizePhone(dto.phone);
     if (phoneNormalized.length < 10 || phoneNormalized.length > 15) {
@@ -86,7 +81,7 @@ export class CustomersService {
     const pinHash = await bcrypt.hash(dto.pin, this.pinRounds);
     const customer = this.users.create({
       role: 'customer',
-      businessId: businessUser.id,
+      businessId,
       fullName: dto.name.trim(),
       phone: dto.phone.trim(),
       phoneNormalized,
