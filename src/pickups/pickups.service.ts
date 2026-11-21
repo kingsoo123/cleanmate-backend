@@ -156,6 +156,7 @@ export class PickupsService {
         itemsSummary: pickup.estimatedItems,
         deliveryPreference: 'Pickup at shop',
         pickupId: pickup.id,
+        createdByUserId: business.id,
       });
       const savedOrder = await this.orders.save(order);
       pickup.orderId = savedOrder.id;

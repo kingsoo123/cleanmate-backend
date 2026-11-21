@@ -127,11 +127,7 @@ export class MessagesService {
             })
           : Promise.resolve([] as User[]),
         access.isOwner
-          ? this.staffMessages.find({
-              where: { businessId: ownerId },
-              order: { createdAt: 'DESC' },
-              take: 500,
-            })
+          ? this.loadStaffMessagePreviews(ownerId)
           : Promise.resolve([] as BusinessStaffMessage[]),
       ]);
 
@@ -181,11 +177,16 @@ export class MessagesService {
     this.assertBusinessOwnerPortal(owner);
     const access = resolveBusinessPortalAccess(owner);
     const staff = await this.findStaffMember(access.ownerUserId, staffUserId);
-    const rows = await this.staffMessages.find({
-      where: { businessId: access.ownerUserId, staffUserId: staff.id },
-      order: { createdAt: 'ASC' },
-      take: MESSAGE_PAGE_SIZE,
-    });
+    let rows: BusinessStaffMessage[] = [];
+    try {
+      rows = await this.staffMessages.find({
+        where: { businessId: access.ownerUserId, staffUserId: staff.id },
+        order: { createdAt: 'ASC' },
+        take: MESSAGE_PAGE_SIZE,
+      });
+    } catch {
+      rows = [];
+    }
 
     return {
       staffUserId: staff.id,
@@ -218,13 +219,20 @@ export class MessagesService {
       throw new NotFoundException('Business not found.');
     }
 
-    const saved = await this.staffMessages.save(
-      this.staffMessages.create({
-        businessId: access.ownerUserId,
-        staffUserId: staff.id,
-        body: trimmed,
-      }),
-    );
+    let saved: BusinessStaffMessage;
+    try {
+      saved = await this.staffMessages.save(
+        this.staffMessages.create({
+          businessId: access.ownerUserId,
+          staffUserId: staff.id,
+          body: trimmed,
+        }),
+      );
+    } catch {
+      throw new BadRequestException(
+        'Staff messaging is not available until the server database is updated.',
+      );
+    }
 
     const businessName =
       ownerUser.businessName?.trim() ||
@@ -249,10 +257,10 @@ export class MessagesService {
   }
 
   async listConversationsForBusiness(business: User) {
-    this.assertBusiness(business);
+    const access = resolveBusinessPortalAccess(business);
 
     const rows = await this.conversations.find({
-      where: { businessId: business.id },
+      where: { businessId: access.ownerUserId },
       relations: { customer: true },
       order: { lastMessageAt: 'DESC', createdAt: 'DESC' },
     });
@@ -268,13 +276,13 @@ export class MessagesService {
   }
 
   async getBusinessThread(business: User, customerId: string) {
-    this.assertBusiness(business);
+    const access = resolveBusinessPortalAccess(business);
 
     const customer = await this.users.findOne({
       where: {
         id: customerId,
         role: 'customer',
-        businessId: business.id,
+        businessId: access.ownerUserId,
       },
     });
     if (!customer) {
@@ -282,7 +290,7 @@ export class MessagesService {
     }
 
     const conversation = await this.getOrCreateConversation(
-      business.id,
+      access.ownerUserId,
       customer.id,
     );
     const messageRows = await this.loadMessages(conversation.id);
@@ -293,18 +301,20 @@ export class MessagesService {
       customerName: customer.fullName.trim() || 'Customer',
       customerPhone: customer.phone,
       partnerIsTyping: this.typing.isTyping(conversation.id, 'customer'),
-      messages: messageRows.map((row) => this.toMessageDto(row, business.id)),
+      messages: messageRows.map((row) =>
+        this.toMessageDto(row, access.actor.id),
+      ),
     };
   }
 
   async sendAsBusiness(business: User, customerId: string, body: string) {
-    this.assertBusiness(business);
+    const access = resolveBusinessPortalAccess(business);
 
     const customer = await this.users.findOne({
       where: {
         id: customerId,
         role: 'customer',
-        businessId: business.id,
+        businessId: access.ownerUserId,
       },
     });
     if (!customer) {
@@ -312,25 +322,29 @@ export class MessagesService {
     }
 
     const conversation = await this.getOrCreateConversation(
-      business.id,
+      access.ownerUserId,
       customer.id,
     );
     const saved = await this.persistMessage({
       conversation,
-      senderId: business.id,
+      senderId: access.actor.id,
       senderRole: 'business',
       body,
     });
     this.typing.clearTyping(conversation.id, 'business');
 
+    const owner = await this.users.findOne({
+      where: { id: access.ownerUserId, role: 'business' },
+    });
+    const businessForNotify = owner ?? access.actor;
     await this.customerNotifications.notifyChatFromBusiness(
       customer,
-      business,
+      businessForNotify,
       saved.body,
       conversation.id,
     );
 
-    return this.toMessageDto(saved, business.id);
+    return this.toMessageDto(saved, access.actor.id);
   }
 
   async bulkSendAsBusinessOwner(
@@ -534,6 +548,20 @@ export class MessagesService {
       throw new ForbiddenException(
         'Only the business owner can message staff.',
       );
+    }
+  }
+
+  private async loadStaffMessagePreviews(
+    businessId: string,
+  ): Promise<BusinessStaffMessage[]> {
+    try {
+      return await this.staffMessages.find({
+        where: { businessId },
+        order: { createdAt: 'DESC' },
+        take: 500,
+      });
+    } catch {
+      return [];
     }
   }
 

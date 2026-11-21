@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { formatRelativeTime } from '../common/format';
 import { LaundryOrder } from '../entities/laundry-order.entity';
 import { OrderLineItem } from '../entities/order-line-item.entity';
@@ -139,6 +139,7 @@ export class OrdersService {
       customerNotes: dto.customerNotes?.trim() || null,
       internalNotes: dto.internalNotes?.trim() || null,
       pickupId: null,
+      createdByUserId: access.actor.id,
     });
 
     const savedOrder = await this.orders.save(order);
@@ -219,7 +220,28 @@ export class OrdersService {
     for (const row of rows) {
       await this.ensureOrderTag(row);
     }
-    return rows.map((row) => this.toBusinessListRow(row));
+
+    const creatorIds = [
+      ...new Set(
+        rows
+          .map((row) => row.createdByUserId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const creators =
+      creatorIds.length > 0
+        ? await this.users.find({ where: { id: In(creatorIds) } })
+        : [];
+    const creatorById = new Map(creators.map((user) => [user.id, user]));
+
+    return rows.map((row) =>
+      this.toBusinessListRow(
+        row,
+        row.createdByUserId
+          ? creatorById.get(row.createdByUserId)
+          : undefined,
+      ),
+    );
   }
 
   async getOneForBusiness(business: User, orderId: string) {
@@ -235,7 +257,10 @@ export class OrdersService {
     assertOrderInPortalScope(access, order);
 
     await this.ensureOrderTag(order);
-    return this.toBusinessListRow(order);
+    const createdBy = order.createdByUserId
+      ? await this.users.findOne({ where: { id: order.createdByUserId } })
+      : null;
+    return this.toBusinessListRow(order, createdBy ?? undefined);
   }
 
   async updateOrderStatusForBusiness(
@@ -292,7 +317,10 @@ export class OrdersService {
       );
     }
 
-    return this.toBusinessListRow(order);
+    const createdBy = order.createdByUserId
+      ? await this.users.findOne({ where: { id: order.createdByUserId } })
+      : null;
+    return this.toBusinessListRow(order, createdBy ?? undefined);
   }
 
   async bulkUpdateOrderStatusForBusiness(
@@ -721,7 +749,7 @@ export class OrdersService {
     return code;
   }
 
-  private toBusinessListRow(order: LaundryOrder) {
+  private toBusinessListRow(order: LaundryOrder, createdBy?: User | null) {
     return {
       id: order.id,
       orderNumber: order.orderNumber,
@@ -739,6 +767,7 @@ export class OrdersService {
       totalNgn: order.totalNgn,
       outstandingNgn: order.outstandingNgn,
       itemsSummary: order.itemsSummary,
+      createdByName: formatOrderCreatorLabel(createdBy),
       updatedAt: order.updatedAt.toISOString(),
       createdAt: order.createdAt.toISOString(),
     };
@@ -783,4 +812,21 @@ export class OrdersService {
       'Your laundry'
     );
   }
+}
+
+function formatOrderCreatorLabel(user: User | null | undefined): string | null {
+  if (!user) {
+    return null;
+  }
+  const name = user.fullName?.trim() || 'Staff';
+  if (user.role === 'business') {
+    return `${name} (Owner)`;
+  }
+  if (user.role === 'branch_manager') {
+    return `${name} (Branch manager)`;
+  }
+  if (user.role === 'rider') {
+    return `${name} (Rider)`;
+  }
+  return name;
 }

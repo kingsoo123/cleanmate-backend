@@ -45,6 +45,11 @@ export class LaundryOrder {
   @Column({ type: 'uuid', name: 'customer_id', nullable: true })
   customerId: string | null;
 
+  /** Portal user (owner, branch manager, etc.) who created the order. */
+  @Index()
+  @Column({ type: 'uuid', name: 'created_by_user_id', nullable: true })
+  createdByUserId: string | null;
+
   @Column({ type: 'varchar', length: 32, name: 'order_number' })
   orderNumber: string;
 
@@ -110,6 +115,10 @@ export class LaundryOrder {
   @ManyToOne(() => User)
   @JoinColumn({ name: 'customer_id' })
   customer?: User | null;
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'created_by_user_id' })
+  createdByUser?: User | null;
 
   @ManyToOne(() => User)
   @JoinColumn({ name: 'business_id' })
