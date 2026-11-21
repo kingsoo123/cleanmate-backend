@@ -339,12 +339,6 @@ export class OrdersService {
       }
     }
 
-    if (updated.length === 0 && skipped.length > 0) {
-      throw new BadRequestException(
-        'No orders were updated. Check skipped reasons.',
-      );
-    }
-
     return {
       updated,
       skipped,
