@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { BusinessStaffMessage } from '../entities/business-staff-message.entity';
 import { ChatConversation } from '../entities/chat-conversation.entity';
 import { ChatMessage } from '../entities/chat-message.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -12,7 +13,12 @@ import { TypingService } from './typing.service';
   imports: [
     PushModule,
     NotificationsModule,
-    TypeOrmModule.forFeature([ChatConversation, ChatMessage, User]),
+    TypeOrmModule.forFeature([
+      BusinessStaffMessage,
+      ChatConversation,
+      ChatMessage,
+      User,
+    ]),
   ],
   providers: [MessagesService, TypingService],
   exports: [MessagesService, TypingService],

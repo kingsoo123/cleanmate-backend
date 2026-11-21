@@ -199,10 +199,34 @@ export class BusinessOperationsController {
     return this.orders.verifyPayment(user, id);
   }
 
+  @Get('messages/directory')
+  listMessageDirectory(@CurrentUser() user: User) {
+    return this.messages.listMessageDirectory(user);
+  }
+
   @Get('messages/conversations')
   @Roles('business')
   listMessageConversations(@CurrentUser() user: User) {
     return this.messages.listConversationsForBusiness(user);
+  }
+
+  @Get('messages/staff/:staffUserId')
+  @Roles('business')
+  getStaffMessageThread(
+    @CurrentUser() user: User,
+    @Param('staffUserId') staffUserId: string,
+  ) {
+    return this.messages.getStaffThread(user, staffUserId);
+  }
+
+  @Post('messages/staff/:staffUserId')
+  @Roles('business')
+  sendMessageToStaffMember(
+    @CurrentUser() user: User,
+    @Param('staffUserId') staffUserId: string,
+    @Body() dto: SendMessageDto,
+  ) {
+    return this.messages.sendToStaffMember(user, staffUserId, dto.body);
   }
 
   @Get('messages/conversations/:customerId')
