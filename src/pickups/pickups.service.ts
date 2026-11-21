@@ -32,9 +32,16 @@ export class PickupsService {
     private readonly customerNotifications: CustomerNotificationsService,
   ) {}
 
+  /** Globally unique — `reference` has a single-column unique index, not per-business. */
   private async nextReference(businessId: string): Promise<string> {
     const count = await this.pickups.count({ where: { businessId } });
-    return `PU-${2200 + count + 1}`;
+    const seq = 2200 + count + 1;
+    const businessKey = businessId.replace(/-/g, '').slice(0, 8).toUpperCase();
+    let candidate = `PU-${businessKey}-${seq}`;
+    if (await this.pickups.exists({ where: { reference: candidate } })) {
+      candidate = `PU-${businessKey}-${seq}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+    }
+    return candidate.slice(0, 32);
   }
 
   async createForCustomer(customer: User, dto: CreatePickupDto) {
