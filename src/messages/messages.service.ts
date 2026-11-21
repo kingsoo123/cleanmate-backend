@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { ChatConversation } from '../entities/chat-conversation.entity';
 import { ChatMessage, ChatSenderRole } from '../entities/chat-message.entity';
 import { CustomerNotificationsService } from '../notifications/customer-notifications.service';
@@ -182,6 +182,107 @@ export class MessagesService {
     );
 
     return this.toMessageDto(saved, business.id);
+  }
+
+  async bulkSendAsBusinessOwner(
+    owner: User,
+    body: string,
+    options?: { includeCustomers?: boolean; includeStaff?: boolean },
+  ) {
+    if (owner.role !== 'business') {
+      throw new ForbiddenException(
+        'Only the business owner can send bulk messages.',
+      );
+    }
+
+    const includeCustomers = options?.includeCustomers ?? true;
+    const includeStaff = options?.includeStaff ?? true;
+    if (!includeCustomers && !includeStaff) {
+      throw new BadRequestException(
+        'Choose at least one audience: customers or staff.',
+      );
+    }
+
+    const trimmed = body.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Message cannot be empty.');
+    }
+
+    const customerResults: {
+      customerId: string;
+      ok: boolean;
+      error?: string;
+    }[] = [];
+
+    if (includeCustomers) {
+      const customers = await this.users.find({
+        where: { role: 'customer', businessId: owner.id },
+        order: { fullName: 'ASC' },
+      });
+
+      for (const customer of customers) {
+        try {
+          await this.sendAsBusiness(owner, customer.id, trimmed);
+          customerResults.push({ customerId: customer.id, ok: true });
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : 'Could not send message.';
+          customerResults.push({
+            customerId: customer.id,
+            ok: false,
+            error: message,
+          });
+        }
+      }
+    }
+
+    const staffRoles: User['role'][] = ['branch_manager', 'rider'];
+    const staffNotified: { userId: string; role: User['role'] }[] = [];
+
+    if (includeStaff) {
+      const staff = await this.users.find({
+        where: {
+          businessId: owner.id,
+          role: In(staffRoles),
+        },
+        order: { fullName: 'ASC' },
+      });
+
+      const businessName =
+        owner.businessName?.trim() ||
+        owner.fullName?.trim() ||
+        'Your laundry';
+      const title = `Message from ${businessName}`;
+      const preview = previewMessageBody(trimmed);
+
+      for (const member of staff) {
+        const href =
+          member.role === 'branch_manager'
+            ? '/business/dashboard'
+            : '/rider/dashboard';
+        await this.push.sendToUser(member.id, {
+          title,
+          body: preview,
+          href,
+        });
+        staffNotified.push({ userId: member.id, role: member.role });
+      }
+    }
+
+    const customersSent = customerResults.filter((row) => row.ok).length;
+    const customersFailed = customerResults.filter((row) => !row.ok);
+
+    return {
+      customers: {
+        attempted: customerResults.length,
+        sent: customersSent,
+        failed: customersFailed,
+      },
+      staff: {
+        notified: staffNotified,
+        count: staffNotified.length,
+      },
+    };
   }
 
   async recordBusinessTyping(business: User, customerId: string) {

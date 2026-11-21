@@ -17,6 +17,7 @@ import { CatalogService } from '../catalog/catalog.service';
 import { CreateCatalogServiceDto } from '../catalog/dto/create-catalog-service.dto';
 import { UpdateCatalogServiceDto } from '../catalog/dto/update-catalog-service.dto';
 import { DashboardService } from '../dashboard/dashboard.service';
+import { BulkSendMessageDto } from '../messages/dto/bulk-send-message.dto';
 import { SendMessageDto } from '../messages/dto/send-message.dto';
 import { MessagesService } from '../messages/messages.service';
 import { CreateWalkInOrderDto } from '../orders/dto/create-walk-in-order.dto';
@@ -211,6 +212,19 @@ export class BusinessOperationsController {
     @Param('customerId') customerId: string,
   ) {
     return this.messages.getBusinessThread(user, customerId);
+  }
+
+  @Post('messages/bulk')
+  @Roles('business')
+  @HttpCode(200)
+  sendBulkMessages(
+    @CurrentUser() user: User,
+    @Body() dto: BulkSendMessageDto,
+  ) {
+    return this.messages.bulkSendAsBusinessOwner(user, dto.body, {
+      includeCustomers: dto.includeCustomers,
+      includeStaff: dto.includeStaff,
+    });
   }
 
   @Post('messages/conversations/:customerId')
