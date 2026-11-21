@@ -442,16 +442,18 @@ export class OrdersService {
     );
   }
 
-  async recordPayment(business: User, dto: RecordPaymentDto) {
-    assertBusinessOwner(business);
+  async recordPayment(actor: User, dto: RecordPaymentDto) {
+    const access = resolveBusinessPortalAccess(actor);
 
     const order = await this.orders.findOne({
-      where: { id: dto.orderId, businessId: business.id },
+      where: { id: dto.orderId, businessId: access.ownerUserId },
       relations: { customer: true },
     });
     if (!order) {
-      throw new ForbiddenException('Order not found.');
+      throw new NotFoundException('Order not found.');
     }
+    assertOrderInPortalScope(access, order);
+
     if (!order.customerId) {
       throw new BadRequestException(
         'Link this walk-in order to a customer account before recording payments.',
@@ -459,7 +461,7 @@ export class OrdersService {
     }
 
     const payment = this.payments.create({
-      businessId: business.id,
+      businessId: access.ownerUserId,
       orderId: order.id,
       customerId: order.customerId,
       amountNgn: dto.amountNgn,
@@ -475,8 +477,11 @@ export class OrdersService {
 
     if (order.customerId && order.customer) {
       await this.ensureOrderTag(order);
+      const owner = access.isOwner
+        ? actor
+        : await this.users.findOne({ where: { id: access.ownerUserId } });
       const businessName =
-        business.businessName?.trim() || business.fullName || 'Your laundry';
+        owner?.businessName?.trim() || owner?.fullName || 'Your laundry';
       await this.customerNotifications.notifyPaymentReceived(
         order,
         order.customer,

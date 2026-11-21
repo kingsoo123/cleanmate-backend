@@ -188,7 +188,7 @@ export class BusinessOperationsController {
   }
 
   @Post('payments')
-  @Roles('business')
+  @Roles('business', 'branch_manager')
   recordPayment(@CurrentUser() user: User, @Body() dto: RecordPaymentDto) {
     return this.orders.recordPayment(user, dto);
   }
