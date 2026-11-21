@@ -589,6 +589,19 @@ export class OrdersService {
       );
     }
 
+    const existingPending = await this.payments.findOne({
+      where: {
+        orderId: order.id,
+        customerId: customer.id,
+        status: 'Pending',
+      },
+    });
+    if (existingPending) {
+      throw new BadRequestException(
+        'You already have a payment awaiting verification for this order.',
+      );
+    }
+
     const method = dto.method.trim();
     if (method === 'Bank transfer' && !dto.transferReference?.trim()) {
       throw new BadRequestException('Enter your transfer reference.');
@@ -615,6 +628,7 @@ export class OrdersService {
 
     return {
       id: saved.id,
+      orderId: order.id,
       orderNumber: order.orderNumber,
       tag: order.tag ?? order.trackingCode,
       trackingCode: order.tag ?? order.trackingCode,
@@ -674,6 +688,7 @@ export class OrdersService {
     });
     return rows.map((row) => ({
       id: row.id,
+      orderId: row.orderId,
       orderNumber: row.order.orderNumber,
       amountNgn: row.amountNgn,
       method: row.method,
